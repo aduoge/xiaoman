@@ -44,6 +44,8 @@ enum class Tab(@StringRes val label: Int, val icon: ImageVector) {
 @Composable
 fun XiaomanRoot(graph: AppGraph) {
     var tab by rememberSaveable { mutableStateOf(Tab.CHAT) }
+    // Set by the skills screen when the user starts authoring; ChatScreen prefills its input once and clears it.
+    var pendingChatDraft by rememberSaveable { mutableStateOf<String?>(null) }
     val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     Scaffold(
         bottomBar = {
@@ -61,8 +63,16 @@ fun XiaomanRoot(graph: AppGraph) {
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
             when (tab) {
-                Tab.CHAT -> ChatScreen(graph, onOpenSettings = { tab = Tab.SETTINGS })
-                Tab.SKILLS -> SkillsScreen(graph)
+                Tab.CHAT -> ChatScreen(
+                    graph,
+                    onOpenSettings = { tab = Tab.SETTINGS },
+                    pendingDraft = pendingChatDraft,
+                    onDraftConsumed = { pendingChatDraft = null },
+                )
+                Tab.SKILLS -> SkillsScreen(graph) { draft ->
+                    pendingChatDraft = draft
+                    tab = Tab.CHAT
+                }
                 Tab.SERVICES -> McpScreen(graph)
                 Tab.MEMORY -> MemoryScreen(graph)
                 Tab.SETTINGS -> SettingsScreen(graph)

@@ -1,5 +1,7 @@
 package dev.xiaoman.api
 
+import java.io.File
+
 /**
  * A scenario skill written by users: a folder with `SKILL.md` and an optional `flow.yaml`.
  *
@@ -82,4 +84,20 @@ interface SkillRepository {
     suspend fun list(): List<Skill>
 
     suspend fun get(name: String): Skill?
+}
+
+enum class SkillOrigin { USER, BUNDLED }
+
+data class StoredSkill(val name: String, val skillMd: String, val origin: SkillOrigin, val hasFlow: Boolean)
+
+/** User-authored skills override bundled ones; writes and deletes only affect the user root. */
+interface UserSkillStore {
+    fun read(name: String): StoredSkill?
+    fun save(name: String, skillMd: String): File
+    fun delete(name: String): Boolean
+    fun isUser(name: String): Boolean
+    fun isBundled(name: String): Boolean
+
+    /** Uses the skill parser without a flow; keeps parsing in core-skills rather than core-agent. */
+    fun validate(name: String, skillMd: String): Pair<Skill?, List<SkillProblem>>
 }

@@ -10,6 +10,10 @@ import dev.xiaoman.api.Skill
 import dev.xiaoman.api.SkillRepository
 import dev.xiaoman.api.ToolCall
 import dev.xiaoman.api.ToolProvider
+import dev.xiaoman.api.UserChannel
+import dev.xiaoman.api.UserSkillStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -32,6 +36,8 @@ internal class ChatTools(
     private val reminders: ReminderScheduler,
     private val external: ToolProvider?,
     private val phoneTasks: Boolean = true,
+    private val userSkillStore: UserSkillStore? = null,
+    private val users: UserChannel? = null,
     private val phoneTask: suspend (goal: String, skill: String?) -> AgentEvent.PhoneTaskFinished,
 ) {
     suspend fun execute(call: ToolCall, taskId: String, emit: (AgentEvent) -> Unit): String = try {
@@ -42,6 +48,9 @@ internal class ChatTools(
             AgentTools.MEMORY_WRITE -> write(args, taskId, emit)
             AgentTools.MEMORY_FORGET -> forget(args, taskId, emit)
             AgentTools.LIST_SKILLS -> listSkills()
+            AgentTools.SKILL_READ -> if (userSkillStore != null) readSkill(args) else external(call, taskId, emit)
+            AgentTools.SKILL_SAVE -> if (userSkillStore != null) saveSkill(args, taskId) else external(call, taskId, emit)
+            AgentTools.SKILL_DELETE -> if (userSkillStore != null) deleteSkill(args, taskId) else external(call, taskId, emit)
             AgentTools.REMINDER_SET -> reminder(args)
             AgentTools.PHONE_TASK -> if (phoneTasks) phone(args) else error("这里不能操作手机，请用其他工具或告诉用户自己操作")
             else -> external(call, taskId, emit)
@@ -55,6 +64,13 @@ internal class ChatTools(
     }
 
     private fun error(message: String) = buildJsonObject { put("error", message) }.toString()
+
+    /** The store rejects bad skill names (and path traversal) with IllegalArgumentException; surface them as parameter errors. */
+    private fun <T> withValidName(block: () -> T): T = try {
+        block()
+    } catch (e: IllegalArgumentException) {
+        throw ToolArgumentException(e.message ?: "技能名不合法")
+    }
 
     private fun parseArgs(raw: String): JsonObject {
         if (raw.isBlank()) return JsonObject(emptyMap())
@@ -161,6 +177,87 @@ internal class ChatTools(
             }
         }
     }.toString()
+
+    private suspend fun readSkill(args: JsonObject): String = withContext(Dispatchers.IO) {
+        val name = required(args, "name")
+        val stored = withValidName { userSkillStore!!.read(name) }
+        buildJsonObject {
+            put("found", stored != null)
+            put("name", name)
+            if (stored != null) {
+                put("origin", stored.origin.name.lowercase())
+                put("skill_md", stored.skillMd)
+                put("hasFlow", stored.hasFlow)
+            }
+        }.toString()
+    }
+
+    private suspend fun confirmed(taskId: String, question: String): Boolean {
+        val channel = users ?: throw IllegalStateException("缺少用户确认通道")
+        return channel.ask(taskId, question, takeover = false).trim().lowercase() in
+            setOf("确认", "是", "好", "可以", "y", "yes")
+    }
+
+    private suspend fun saveSkill(args: JsonObject, taskId: String): String {
+        val store = userSkillStore!!
+        val name = required(args, "name")
+        val markdown = required(args, "skill_md")
+        val (skill, problems) = withContext(Dispatchers.IO) { withValidName { store.validate(name, markdown) } }
+        if (problems.isNotEmpty() || skill == null) return buildJsonObject {
+            put("error", "SKILL.md 校验失败")
+            putJsonArray("problems") {
+                problems.forEach { problem -> addJsonObject {
+                    put("source", problem.source)
+                    put("message", problem.message)
+                    problem.line?.let { put("line", it) }
+                } }
+            }
+        }.toString()
+        val (created, overridesBundled) = withContext(Dispatchers.IO) {
+            withValidName { !store.isUser(name) to store.isBundled(name) }
+        }
+        val draft = if (markdown.length > 3000) markdown.take(3000) + "\n[SKILL.md 超过 3000 字，展示已截断]" else markdown
+        val question = buildString {
+            append(if (created) "新建" else "修改").append("技能「").append(name).append("」。\n")
+            if (overridesBundled) append("保存后将覆盖同名内置技能，内置文件保留。\n")
+            append("description：").append(skill.description).append("\nchannel：").append(skill.channel.wire)
+            append("\n\nSKILL.md：\n").append(draft)
+            append("\n\n回复“确认”保存，其他回复取消。")
+        }
+        if (!confirmed(taskId, question)) return buildJsonObject {
+            put("saved", false); put("reason", "用户取消")
+        }.toString()
+        val path = withContext(Dispatchers.IO) { withValidName { store.save(name, markdown) } }
+        val loaded = skills.reload()
+        if (loaded.skills.none { it.name == name && it.source == path.parentFile.path }) {
+            return buildJsonObject {
+                put("error", "文件已写入，但重新加载后用户技能不可用，请检查 SKILL.md 和已有 flow.yaml")
+                putJsonArray("problems") { loaded.problems.forEach { add(it.message) } }
+            }.toString()
+        }
+        return buildJsonObject {
+            put("saved", true); put("created", created); put("overridesBundled", overridesBundled); put("path", path.path)
+        }.toString()
+    }
+
+    private suspend fun deleteSkill(args: JsonObject, taskId: String): String {
+        val store = userSkillStore!!
+        val name = required(args, "name")
+        val (isUser, isBundled) = withContext(Dispatchers.IO) {
+            withValidName { store.isUser(name) to store.isBundled(name) }
+        }
+        if (!isUser) return error(if (isBundled) "内置技能不能删除，可以用 skill_save 写一份同名技能覆盖它" else "技能不存在：$name")
+        val question = "删除用户技能「$name」及其文件夹。" +
+            (if (isBundled) "删除后将恢复同名内置技能。" else "删除后该技能将不再可用。") +
+            "回复“确认”删除，其他回复取消。"
+        if (!confirmed(taskId, question)) return buildJsonObject {
+            put("deleted", false); put("reason", "用户取消")
+        }.toString()
+        val deleted = withContext(Dispatchers.IO) { withValidName { store.delete(name) } }
+        val loaded = skills.reload()
+        val restoredBundled = isBundled && loaded.skills.any { it.name == name }
+        return buildJsonObject { put("deleted", deleted); put("restoredBundled", restoredBundled) }.toString()
+    }
 
     private fun reminder(args: JsonObject): String {
         val text = required(args, "text")

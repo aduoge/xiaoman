@@ -40,9 +40,14 @@
     <!-- Skills -->
     <string name="skills_title">技能</string>
     <string name="skills_reload">重新加载</string>
+    <string name="skills_new">新建技能</string>
+    <string name="skills_edit">用一句话修改</string>
+    <string name="skills_mine">我的</string>
     <string name="skills_empty">还没有技能。把技能文件夹放到 %1$s 后点重新加载。</string>
     <string name="skills_problems">加载问题</string>
     <string name="skills_apps">App：%1$s</string>
+    <string name="chat_new_skill_prompt">帮我新建一个技能：</string>
+    <string name="chat_edit_skill_prompt">修改技能 %1$s：</string>
 
     <!-- Memory -->
     <string name="memory_search_hint">搜索记忆</string>

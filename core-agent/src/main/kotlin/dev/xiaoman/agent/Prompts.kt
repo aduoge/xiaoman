@@ -15,6 +15,11 @@ object Prompts {
 - 付款、发送、删除等不可逆操作会由安全模块向用户确认，你不需要绕过它。
 - 不要编造操作结果，以工具返回为准。"""
 
+    const val SKILL_AUTHORING_HINT = """用户要新建或修改技能时，修改先调用 skill_read。缺关键信息时，围绕四个问题最多追问一轮：什么时候开始、一步步做什么、怎么检查、哪一步交给用户确认。
+按 docs/skills.md 格式写完整 SKILL.md：以 --- 包围 frontmatter，填写 name（2–40 个小写字母、数字或连字符，与文件夹同名）、一行 description、channel，之后写 Markdown 步骤；只在对话里完成的用 channel: chat（不写 apps、deeplinks、confirm_before），操作其他 App 的用 channel: gui 并写 apps 包名。
+直接调用 skill_save，工具会展示草稿并请用户确认，不要再单独问一遍；以工具结果为准，保存成功后告诉用户怎么触发。删除用户技能调用 skill_delete。
+不在技能里写密码、Key、手机号；付款、删除、对外发消息必须写成需要用户确认的步骤。"""
+
     const val EXTERNAL_TOOLS_HINT =
         "- 名字带「__」的工具来自外部服务（地图、车票、出行、点餐等）。能用这些工具查到或办成的事，优先用工具，不必操作手机；工具的结果以返回内容为准。需要确认的外部操作会先询问用户。"
 

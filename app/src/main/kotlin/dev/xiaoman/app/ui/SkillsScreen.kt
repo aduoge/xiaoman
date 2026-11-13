@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -16,14 +18,22 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -65,12 +75,29 @@ class SkillsViewModel(
 }
 
 @Composable
-fun SkillsScreen(graph: AppGraph) {
+fun SkillsScreen(graph: AppGraph, onAuthorSkill: (String) -> Unit) {
     val vm = viewModel { SkillsViewModel(graph.skills, { graph.startup.await() }, graph::logSkillProblems) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val newSkillPrompt = stringResource(R.string.chat_new_skill_prompt)
+    // Reload whenever the screen comes back to the foreground (the user may have pushed skills over adb).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var skipFirstResume by remember { mutableStateOf(true) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (skipFirstResume) skipFirstResume = false else vm.reload()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.skills_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            TextButton(onClick = { onAuthorSkill(newSkillPrompt) }) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Text(stringResource(R.string.skills_new), modifier = Modifier.padding(start = 4.dp))
+            }
             TextButton(onClick = vm::reload, enabled = !state.loading) {
                 Icon(Icons.Filled.Refresh, contentDescription = null)
                 Text(stringResource(R.string.skills_reload), modifier = Modifier.padding(start = 4.dp))
@@ -85,14 +112,31 @@ fun SkillsScreen(graph: AppGraph) {
                 item { Text(stringResource(R.string.skills_empty, graph.skillsDir.path), style = MaterialTheme.typography.bodyMedium) }
             }
             items(state.skills, key = { it.name }) { skill ->
+                val isUserSkill = skill.source.startsWith(graph.skillsDir.path)
+                val editPrompt = stringResource(R.string.chat_edit_skill_prompt, skill.name)
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(skill.name, style = MaterialTheme.typography.titleMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(skill.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                            if (isUserSkill) {
+                                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+                                    Text(
+                                        stringResource(R.string.skills_mine),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
+                        }
                         Text(skill.description, style = MaterialTheme.typography.bodyMedium)
                         if (skill.apps.isNotEmpty()) {
                             Text(stringResource(R.string.skills_apps, skill.apps.joinToString()), style = MaterialTheme.typography.bodySmall)
                         }
                         Text(skill.source, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TextButton(onClick = { onAuthorSkill(editPrompt) }) {
+                            Text(stringResource(R.string.skills_edit))
+                        }
                     }
                 }
             }

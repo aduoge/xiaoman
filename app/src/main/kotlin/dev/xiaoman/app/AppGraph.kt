@@ -27,6 +27,7 @@ import dev.xiaoman.mcp.UserChannelApprovals
 import dev.xiaoman.memory.FileMemoryStore
 import dev.xiaoman.sentinel.PolicySentinel
 import dev.xiaoman.skills.DirectorySkillRepository
+import dev.xiaoman.skills.FileUserSkillStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +65,9 @@ class AppGraph(context: Context, private val llm: LlmClientFactory = LlmClients.
     val memory by lazy { FileMemoryStore(memoryDir) }
 
     val skills by lazy { DirectorySkillRepository(listOf(bundledSkillsDir, skillsDir)) }
+
+    /** Reads and writes user skills under [skillsDir]; bundled skills under [bundledSkillsDir] are never modified. */
+    val userSkillStore by lazy { FileUserSkillStore(bundledSkillsDir, skillsDir) }
 
     val notifier by lazy { Notifier(app) }
 
@@ -164,6 +168,7 @@ class AppGraph(context: Context, private val llm: LlmClientFactory = LlmClients.
             config = current.agentConfig(),
             idFactory = runIds::next,
             externalTools = mcpFor(key.second),
+            userSkillStore = userSkillStore,
         )
         cachedAgent = key to agent
         return agent

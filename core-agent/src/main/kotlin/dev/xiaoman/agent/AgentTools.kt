@@ -18,6 +18,22 @@ object AgentTools {
     const val REMINDER_SET = "reminder_set"
     const val PHONE_TASK = "phone_task"
 
+    const val SKILL_READ = "skill_read"
+    const val SKILL_SAVE = "skill_save"
+    const val SKILL_DELETE = "skill_delete"
+    val skillAuthoringNames = setOf(SKILL_READ, SKILL_SAVE, SKILL_DELETE)
+
+    // Separate so callers without a store retain exactly the original tool list.
+    val skillAuthoringSpecs: List<ToolSpec> = listOf(
+        ToolSpec(SKILL_READ, "读取技能全文，优先读取用户版本；修改技能前先调用。",
+            schema(listOf("name"), "name" to str("技能名，2–40 个小写字母、数字或连字符"))),
+        ToolSpec(SKILL_SAVE, "校验完整 SKILL.md，向用户展示草稿并确认后新建或修改技能。",
+            schema(listOf("name", "skill_md"), "name" to str("技能名，与 frontmatter 的 name 一致"),
+                "skill_md" to str("完整 SKILL.md，包含 frontmatter 和 Markdown 正文"))),
+        ToolSpec(SKILL_DELETE, "经用户确认后删除用户技能；同名内置技能会恢复，内置技能不能删除。",
+            schema(listOf("name"), "name" to str("用户技能名"))),
+    )
+
     val specs: List<ToolSpec> = listOf(
         ToolSpec(
             MEMORY_SEARCH, "在用户的记忆笔记中全文搜索（支持中文）。",

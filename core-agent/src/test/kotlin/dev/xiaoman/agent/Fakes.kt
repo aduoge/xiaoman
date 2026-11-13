@@ -25,11 +25,16 @@ import dev.xiaoman.api.SearchHit
 import dev.xiaoman.api.Sentinel
 import dev.xiaoman.api.Skill
 import dev.xiaoman.api.SkillLoadResult
+import dev.xiaoman.api.SkillOrigin
+import dev.xiaoman.api.SkillProblem
 import dev.xiaoman.api.SkillRepository
 import dev.xiaoman.api.StopSignal
+import dev.xiaoman.api.StoredSkill
 import dev.xiaoman.api.ToolCall
 import dev.xiaoman.api.UiNode
 import dev.xiaoman.api.UserChannel
+import dev.xiaoman.api.UserSkillStore
+import java.io.File
 
 /** LLM returning scripted responses in order; [fallback] answers once the script is used up. */
 class ScriptedLlm(role: ModelRole = ModelRole.CHAT, var fallback: ((ChatRequest) -> ChatResponse)? = null) : LlmClient {
@@ -106,10 +111,88 @@ class InMemoryMemory : MemoryStore {
 }
 
 class FakeSkills(vararg skills: Skill) : SkillRepository {
-    private val all = skills.toList()
-    override suspend fun reload() = SkillLoadResult(all, emptyList())
-    override suspend fun list() = all
+    private val all = skills.toMutableList()
+    var reloadCount = 0
+        private set
+
+    fun add(skill: Skill) {
+        all.removeAll { it.name == skill.name }
+        all.add(skill)
+    }
+
+    override suspend fun reload(): SkillLoadResult {
+        reloadCount++
+        return SkillLoadResult(all.toList(), emptyList())
+    }
+
+    override suspend fun list() = all.toList()
     override suspend fun get(name: String) = all.firstOrNull { it.name == name }
+}
+
+/** In-memory [UserSkillStore]; [onSaved] lets tests mimic a repository reload picking the new folder up. */
+class FakeUserSkillStore(
+    private val userRoot: File = File("/tmp/xiaoman-fake-skills/user"),
+    bundled: Map<String, String> = emptyMap(),
+) : UserSkillStore {
+    private val bundledSkills = bundled.toMap()
+    private val userSkills = mutableMapOf<String, String>()
+    val saved = mutableListOf<Pair<String, String>>()
+    val deleted = mutableListOf<String>()
+
+    /** When non-empty, [validate] reports these problems and returns no skill, like a broken SKILL.md. */
+    var validateProblems: List<SkillProblem> = emptyList()
+    var onSaved: ((name: String) -> Unit)? = null
+
+    fun userFolder(name: String): File {
+        require(NAME.matches(name)) { "技能名必须匹配 ^[a-z0-9-]{2,40}$" }
+        return File(userRoot, name)
+    }
+
+    override fun read(name: String): StoredSkill? {
+        require(NAME.matches(name)) { "技能名必须匹配 ^[a-z0-9-]{2,40}$" }
+        val markdown = userSkills[name] ?: bundledSkills[name] ?: return null
+        return StoredSkill(
+            name, markdown,
+            if (name in userSkills) SkillOrigin.USER else SkillOrigin.BUNDLED,
+            hasFlow = false,
+        )
+    }
+
+    override fun save(name: String, skillMd: String): File {
+        require(NAME.matches(name)) { "技能名必须匹配 ^[a-z0-9-]{2,40}$" }
+        userSkills[name] = skillMd
+        saved += name to skillMd
+        onSaved?.invoke(name)
+        return File(userFolder(name), "SKILL.md")
+    }
+
+    override fun delete(name: String): Boolean {
+        require(NAME.matches(name)) { "技能名必须匹配 ^[a-z0-9-]{2,40}$" }
+        if (name !in userSkills) return false
+        userSkills.remove(name)
+        deleted += name
+        return true
+    }
+
+    override fun isUser(name: String): Boolean {
+        require(NAME.matches(name)) { "技能名必须匹配 ^[a-z0-9-]{2,40}$" }
+        return name in userSkills
+    }
+
+    override fun isBundled(name: String): Boolean {
+        require(NAME.matches(name)) { "技能名必须匹配 ^[a-z0-9-]{2,40}$" }
+        return name in bundledSkills
+    }
+
+    override fun validate(name: String, skillMd: String): Pair<Skill?, List<SkillProblem>> {
+        require(NAME.matches(name)) { "技能名必须匹配 ^[a-z0-9-]{2,40}$" }
+        if (validateProblems.isNotEmpty()) return null to validateProblems
+        return Skill(name = name, description = "测试技能 $name", instructions = "步骤", source = userFolder(name).path) to emptyList()
+    }
+
+    companion object {
+        private val NAME = Regex("^[a-z0-9-]{2,40}$")
+    }
 }
 
 fun skill(name: String, description: String = name, flow: dev.xiaoman.api.Flow? = null, deeplinks: Map<String, String> = emptyMap(), memoryRefs: List<String> = emptyList()) =
@@ -167,9 +250,11 @@ class Harness(
     val reminders: FakeReminderScheduler = FakeReminderScheduler(),
     val config: AgentConfig = AgentConfig(),
     val clock: () -> Long = { 1000L },
+    val userSkillStore: UserSkillStore? = null,
 ) {
     private var ids = 0
-    val agent = XiaomanAgent(chat, operator, device, memory, skills, sentinel, users, reminders, config, clock = clock, idFactory = { "t${++ids}" })
+    val agent = XiaomanAgent(chat, operator, device, memory, skills, sentinel, users, reminders, config,
+        clock = clock, idFactory = { "t${++ids}" }, userSkillStore = userSkillStore)
     val events = Events()
     val stop = Stop()
 }

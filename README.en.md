@@ -45,6 +45,7 @@ header for its environment variables.
 
 ## Skills and developer CLI
 
+- You can also create, edit or delete a skill from the phone chat in one sentence; the draft is confirmed in chat and written to the user skills folder. See [docs/skills.md](docs/skills.md) (Chinese).
 - Format: [docs/skills.md](docs/skills.md); examples in [skills/examples/](skills/examples/).
 - [cli/](cli/README.md) (Python 3, stdlib only) lints skills, pushes them over adb, runs tasks on a
   debug build and shows traces:

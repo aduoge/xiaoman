@@ -63,6 +63,7 @@ scripts/gradle.sh test :app:assembleDebug            # 之后可以离线构建
 
 ## 技能与开发者 CLI
 
+- 也可以在手机聊天里用一句话新建、修改或删除技能（草稿确认后写入用户技能目录），见 [docs/skills.md](docs/skills.md) 的「在手机上用一句话新建、修改技能」。
 - 技能格式见 [docs/skills.md](docs/skills.md)，示例在 [skills/examples/](skills/examples/)。
 - [cli/](cli/README.md)（Python 3，仅依赖标准库）可以校验技能、通过 adb 推送到手机、在 debug 包上直接跑任务并查看轨迹：
 

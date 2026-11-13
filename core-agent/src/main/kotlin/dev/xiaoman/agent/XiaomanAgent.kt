@@ -23,6 +23,7 @@ import dev.xiaoman.api.SkillChannel
 import dev.xiaoman.api.SkillRepository
 import dev.xiaoman.api.StopSignal
 import dev.xiaoman.api.UserChannel
+import dev.xiaoman.api.UserSkillStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -41,7 +42,7 @@ class XiaomanAgent(
     private val memory: MemoryStore,
     private val skills: SkillRepository,
     sentinel: Sentinel,
-    users: UserChannel,
+    private val users: UserChannel,
     private val reminders: ReminderScheduler,
     private val config: AgentConfig = AgentConfig(),
     private val persona: String = Prompts.DEFAULT_PERSONA,
@@ -49,6 +50,7 @@ class XiaomanAgent(
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
     /** Extra tools such as MCP servers; their names must not shadow the built-in ones. */
     private val externalTools: ToolProvider? = null,
+    private val userSkillStore: UserSkillStore? = null,
 ) : Agent {
     private val loop = OperatorLoop(operator, device, sentinel, users, config)
     private val flows = FlowRunner(loop, users)
@@ -58,7 +60,8 @@ class XiaomanAgent(
     override suspend fun handle(userMessage: String, listener: AgentListener, stop: StopSignal) {
         val taskId = idFactory()
         val emit: (AgentEvent) -> Unit = listener::onEvent
-        val tools = ChatTools(memory, skills, clock, reminders, externalTools, phoneTasks = config.phoneTasks) { goal, skill ->
+        val tools = ChatTools(memory, skills, clock, reminders, externalTools, phoneTasks = config.phoneTasks,
+            userSkillStore = userSkillStore, users = users) { goal, skill ->
             runPhoneTask(goal, skill, listener, stop)
         }
         try {
@@ -130,13 +133,15 @@ class XiaomanAgent(
         return finish(outcome.success, outcome.summary, task.steps)
     }
 
-    private fun builtInSpecs(): List<ToolSpec> =
-        if (config.phoneTasks) AgentTools.specs else AgentTools.specs.filter { it.name != AgentTools.PHONE_TASK }
+    private fun builtInSpecs(): List<ToolSpec> {
+        val base = if (config.phoneTasks) AgentTools.specs else AgentTools.specs.filter { it.name != AgentTools.PHONE_TASK }
+        return base + if (userSkillStore != null) AgentTools.skillAuthoringSpecs else emptyList()
+    }
 
     /** External tools that do not clash with built-in names; a failing provider simply offers nothing. */
     private suspend fun externalSpecs(): List<ToolSpec> {
         val provider = externalTools ?: return emptyList()
-        val builtIn = AgentTools.specs.map { it.name }.toSet()
+        val builtIn = builtInSpecs().map { it.name }.toSet()
         return try {
             provider.specs().filter { it.name !in builtIn }.distinctBy { it.name }
         } catch (e: CancellationException) {
@@ -148,6 +153,7 @@ class XiaomanAgent(
 
     private suspend fun systemPrompt(userMessage: String, hasExternalTools: Boolean = false): String = buildString {
         append(persona.trim())
+        if (userSkillStore != null) append("\n\n").append(Prompts.SKILL_AUTHORING_HINT)
         if (hasExternalTools) append("\n").append(Prompts.EXTERNAL_TOOLS_HINT)
         append("\n\n").append(Prompts.nowSection(ReminderTimes.promptNow(clock())))
         val list = quietly(emptyList()) { skills.list() }

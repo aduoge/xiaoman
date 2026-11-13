@@ -38,7 +38,12 @@ import dev.xiaoman.app.session.AgentSession
 import dev.xiaoman.hands.XiaomanAccessibilityService
 
 @Composable
-fun ChatScreen(graph: AppGraph, onOpenSettings: () -> Unit) {
+fun ChatScreen(
+    graph: AppGraph,
+    onOpenSettings: () -> Unit,
+    pendingDraft: String? = null,
+    onDraftConsumed: () -> Unit = {},
+) {
     val session = graph.session
     val items by session.items.collectAsStateWithLifecycle()
     val busy by session.busy.collectAsStateWithLifecycle()
@@ -52,6 +57,13 @@ fun ChatScreen(graph: AppGraph, onOpenSettings: () -> Unit) {
     val keyboard = LocalSoftwareKeyboardController.current
     val notificationsGranted = rememberNotificationPermission()
     var draft by rememberSaveable { mutableStateOf("") }
+    // A draft handed over from the skills screen: prefill the input once (no auto-send) and clear the handoff.
+    LaunchedEffect(pendingDraft) {
+        if (!pendingDraft.isNullOrEmpty()) {
+            draft = pendingDraft
+            onDraftConsumed()
+        }
+    }
     val rows = remember(items) { chatTimeline(items) }
     val listState = rememberLazyListState()
     LaunchedEffect(rows.size) {
